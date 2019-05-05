@@ -1,0 +1,305 @@
+---
+title: "Problem Set 2: Risk Parity"
+output: pdf_document
+---
+
+####Name: Jiaming Huang
+
+####Names of whom I discussed this problem set with: [Yanxiang Zhao],[Xichen Luo]
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Question1
+
+Construct the equal-weighted bond market return, value-weighted bond market return, andlagged total bond market capitalization using CRSP Bond data 1. Your output should be from January 1926 to December 2018, at a monthly frequency.
+
+##Answer :
+
+Firstly, I will show the result of my replicating portfolio:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# loading the data 
+library(zoo)
+library(readxl)
+library(ggplot2)
+library(data.table)
+library(DistributionUtils)
+setwd("/Users/jiaminghuang/Downloads")
+
+CRSP_Bonds <- as.data.table(read.csv("CRSP_Bonds.csv")[,c("KYCRSPID","MCALDT","TMRETNUA","TMTOTOUT")])
+
+#1. Construct the equal-weighted bond market return, value-weighted bond market return, and
+#lagged total bond market capitalization using CRSP Bond data 1.
+#Your output should be from January 1926 to December 2018, at a monthly frequency.
+
+PS2_Q1 <- function(CRSP_Bonds){
+  #data preprocessing
+  CRSP_Bonds[,`:=`(TMRETNUA, ifelse(TMRETNUA == -99.0, NA, TMRETNUA))]
+  CRSP_Bonds$MCALDT = as.Date(as.character(CRSP_Bonds$MCALDT),format = "%m/%d/%Y")
+  CRSP_Bonds$MKTCAP = CRSP_Bonds$TMTOTOUT*1000/1000000
+  #calculation of lagged total bond market capitalization
+  CRSP_Bonds[,Pre_MKTCAP := shift(MKTCAP,1),by = KYCRSPID]
+  lagged_total_bond_market_capitalization = CRSP_Bonds[,.(lagged_total_market_capitalization=sum(Pre_MKTCAP, na.rm = TRUE)), by = MCALDT]
+  #construct equal-weighted bond market return
+  equal_weighted_bond_market_return = CRSP_Bonds[,.(equal_weighted_return = mean(TMRETNUA,na.rm = TRUE)), by = MCALDT]
+  #construct value-weighted bond market return
+  value_weighted_bond_market_return = CRSP_Bonds[,.(value_weighted_return = sum(TMRETNUA*Pre_MKTCAP, na.rm = TRUE)/sum(Pre_MKTCAP,na.rm = TRUE)),by = MCALDT]
+  #output result
+  output1 <- data.table(
+    Year = year(value_weighted_bond_market_return$MCALDT),
+    Month = month(value_weighted_bond_market_return$MCALDT),
+    Bond_lag_MV = lagged_total_bond_market_capitalization$lagged_total_market_capitalization,
+    Bond_Ew_Ret = equal_weighted_bond_market_return$equal_weighted_return,
+    Bond_Vw_Ret = value_weighted_bond_market_return$value_weighted_return
+  )
+  output1$Bond_Vw_Ret = na.fill(output1$Bond_Vw_Ret,0)
+  return(output1[2:nrow(output1)])
+}
+Monthly_CRSP_Bonds <- PS2_Q1(CRSP_Bonds)
+Monthly_CRSP_Bonds
+```
+
+Then I will explain detailedly about my process getting the result:
+
+##1. Data Cleaning
+
+For the TMRETNUA column, there are some missing values which are represented of -99. To deal with those exceptions, I reassign those rows with return value NA.
+
+For the MCALDT column, I use as.Date function to transform the date from character type to date type.
+
+The Market Capitalization is simply replaced by shareoutstanding column, which is the column of TMTOTOUT.
+
+##2. Calculating the total lagged market capitalization
+
+Firstly, I use shift function by KYCRSPID column to get lagged market capitalization for each bond. Than I sum up this attribute by date to get total lagged market capitalization.
+
+##3. Calculation of value-weighted return and equal-weighted return
+
+It is exactly the same way I did in PS1 to get the value and equal weighted return of stock.
+
+
+##Question 2
+
+Aggregate stock, bond, and riskless datatables. For each year-month, calculate the lagged
+market value and excess value-weighted returns for both stocks and bonds. Your output should
+be from January 1926 to December 2018, at a monthly frequency.
+
+##Answer: 
+
+The summary statistics are in Table  below. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+CRSP_Stocks <-  as.data.table(read.csv("CRSP_Stocks.csv", header = TRUE))
+
+PS1_Q1 <- function(CRSP_Stocks){
+  #Data Cleaning Part
+  CRSP_Stocks$PRC <- abs(CRSP_Stocks$PRC)
+  CRSP_Stocks[RET == "C"]$RET <- "0"
+  CRSP_Stocks[RET == "B"]$RET <- "0"
+  CRSP_Stocks[DLRET == "A"]$DLRET  <- "0"
+  CRSP_Stocks[DLRET == "P"]$DLRET  <- "0" 
+  CRSP_Stocks[DLRET == "S"]$DLRET  <- "0"
+  CRSP_Stocks[DLRET == "T"]$DLRET  <- "0" 
+  CRSP_Stocks$RET = as.numeric(as.character(CRSP_Stocks$RET))
+  CRSP_Stocks$DLRET = as.numeric(as.character(CRSP_Stocks$DLRET))
+  CRSP_Stocks$date = as.Date(as.character(CRSP_Stocks$date),format = "%Y%m%d")
+  CRSP_Stocks$Year = year(CRSP_Stocks$date)
+  CRSP_Stocks$Month = month(CRSP_Stocks$date)
+  CRSP_Stocks = CRSP_Stocks[CRSP_Stocks$SHRCD == 10|CRSP_Stocks$SHRCD == 11]
+  CRSP_Stocks = CRSP_Stocks[CRSP_Stocks$EXCHCD == 1|CRSP_Stocks$EXCHCD == 2|CRSP_Stocks$EXCHCD == 3]
+  #Calculating Value-Weighted Return
+  #Calculating Value Weight
+  CRSP_Stocks[,MKT_Cap := PRC * SHROUT]
+  #Calculating Return
+  CRSP_Stocks[(!is.na(RET))&(!is.na(DLRET)),RETURN := ((1+RET)*(1+DLRET)-1)]
+  CRSP_Stocks[(is.na(RET))&(!is.na(DLRET)),RETURN := DLRET]
+  CRSP_Stocks[(!is.na(RET))&(is.na(DLRET)),RETURN := RET]
+  #Calculating market value the previous month
+  CRSP_Stocks[,MKT_Cap_Pre := shift(MKT_Cap,1),by = c("PERMNO")]
+  CRSP_Stocks$MKT_Cap_Pre = na.fill(CRSP_Stocks$MKT_Cap_Pre,0)
+  #Calculating Value-Weighted Return
+  Stock_Vw_Ret = CRSP_Stocks[,.(Stock_Vw_Ret = weighted.mean(RETURN,MKT_Cap_Pre,na.rm = TRUE)),by = list(Year,Month)]
+  #Calculating Equal-Weighted Return
+  Stock_Ew_Ret = CRSP_Stocks[,.(Stock_Ew_Ret = mean(RETURN,na.rm = TRUE)),by = list(Year,Month)]
+  #Calculating Total market value the previous month (in millions)
+  Stock_lag_MV = CRSP_Stocks[,.(Stock_lag_MV = sum(MKT_Cap_Pre,na.rm = TRUE)/1000000), by = list(Year,Month)]
+  #Combine the result
+  Result = merge(Stock_Ew_Ret,Stock_Vw_Ret,by = c("Year","Month"))
+  Result = merge(Result,Stock_lag_MV, by = c("Year","Month"))
+  Result$Stock_Vw_Ret = na.fill(Result$Stock_Vw_Ret,0)
+  return(Result)
+}
+
+Monthly_CRSP_Stocks <- PS1_Q1(CRSP_Stocks)
+Monthly_CRSP_Riskless <- as.data.table(read.csv("CRSP_Risk_Free.csv"))
+
+PS2_Q2 <- function(Monthly_CRSP_Stocks,Monthly_CRSP_Bonds,Monthly_CRSP_Riskless){
+  DT = merge(Monthly_CRSP_Bonds,Monthly_CRSP_Stocks, by = c("Year","Month"))
+  Monthly_CRSP_Riskless$caldt = as.Date(as.character(Monthly_CRSP_Riskless$caldt),format = "%Y%m%d")
+  Monthly_CRSP_Riskless[,Year:=year(caldt)]
+  Monthly_CRSP_Riskless[,Month:=month(caldt)]
+  Monthly_CRSP_Riskless$caldt = NULL
+  DT = merge(DT,Monthly_CRSP_Riskless,by = c("Year","Month"))
+  DT[,Stock_Excess_Vw_Ret:=Stock_Vw_Ret-t30ret]
+  DT[,Bond_Excess_Vw_Ret:=Bond_Vw_Ret-t30ret]
+  return(DT[,c("Year","Month","Stock_lag_MV","Stock_Excess_Vw_Ret","Bond_lag_MV","Bond_Excess_Vw_Ret")])
+}
+
+#3. Calculate the monthly unlevered and levered risk-parity portfolio returns as defined by Asness,Frazzini, and Pedersen (2012).3
+#For the levered risk-parity portfolio, match the value-weighted
+#portfolio???s ???? over the longest matched holding period of both. Your output should be from January
+#1926 to December 2018, at a monthly frequency.
+
+Monthly_CRSP_Universe <- PS2_Q2(Monthly_CRSP_Stocks, Monthly_CRSP_Bonds,Monthly_CRSP_Riskless)
+Monthly_CRSP_Universe
+```
+
+For this question, I have things below to talk about:
+
+##1. Monthly_CRSP_Stocks data
+
+I use the function of PS1_Q1 to get the monthly data for stocks with one extension. For PS1_Q1, we get the data started from Feb 1926. However, for this question, I get the data from Jan 1926 and fill the missing value with 0.
+
+##2. Calculate the excess return
+
+I download 30 days Bill rate as monthly inflation rate from CRSP. and since we already got Monthly Stock return and Bond return from PS1_Q1 and PS2_Q1, to calculate the excess return, simply use those returns to subtract the inflation rate.
+
+
+##Question 3
+
+3. Calculate the monthly unlevered and levered risk-parity portfolio returns as defined by Asness,
+Frazzini, and Pedersen (2012).3 For the levered risk-parity portfolio, match the value-weighted
+portfolio???s ???? over the longest matched holding period of both. Your output should be from January
+1926 to December 2018, at a monthly frequency.
+
+##Answer :
+
+In Table 3 below, I got the excess return for different strategies.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+PS2_Q3 <- function(Monthly_CRSP_Universe){
+  Monthly_CRSP_Universe[,Excess_Vw_Ret := (Stock_Excess_Vw_Ret*(Stock_lag_MV/(Stock_lag_MV+Bond_lag_MV)))+(Bond_Excess_Vw_Ret*(Bond_lag_MV/(Stock_lag_MV+Bond_lag_MV)))]
+  Monthly_CRSP_Universe[,Excess_60_40_Ret := 0.6*Stock_Excess_Vw_Ret+0.4*Bond_Excess_Vw_Ret]
+  Monthly_CRSP_Universe[,Stock_inverse_sigma_hat:=0]
+  Monthly_CRSP_Universe[,Bond_inverse_sigma_hat:=0]
+  for (r in 1:36) {
+    Monthly_CRSP_Universe$Stock_inverse_sigma_hat[r] = 1/sd(Monthly_CRSP_Universe$Stock_Excess_Vw_Ret[1:r-1])
+    Monthly_CRSP_Universe$Bond_inverse_sigma_hat[r] = 1/sd(Monthly_CRSP_Universe$Bond_Excess_Vw_Ret[1:r-1])
+  }
+  for (r in 37:nrow(Monthly_CRSP_Universe)) {
+    Monthly_CRSP_Universe$Stock_inverse_sigma_hat[r] = 1/sd(Monthly_CRSP_Universe$Stock_Excess_Vw_Ret[abs(r-36):r-1])
+    Monthly_CRSP_Universe$Bond_inverse_sigma_hat[r] = 1/sd(Monthly_CRSP_Universe$Bond_Excess_Vw_Ret[abs(r-36):r-1])
+  }
+  Monthly_CRSP_Universe[,Unlevered_k := 1/(Stock_inverse_sigma_hat+Bond_inverse_sigma_hat)]
+  Monthly_CRSP_Universe[,Excess_Unlevered_RP_Ret:=Unlevered_k*Stock_inverse_sigma_hat*Stock_Excess_Vw_Ret+Unlevered_k*Bond_inverse_sigma_hat*Bond_Excess_Vw_Ret]
+  vol_levered_port <- sd(Monthly_CRSP_Universe$Stock_inverse_sigma_hat * Monthly_CRSP_Universe$Stock_Excess_Vw_Ret 
+                         + Monthly_CRSP_Universe$Bond_inverse_sigma_hat * Monthly_CRSP_Universe$Bond_Excess_Vw_Ret, na.rm = TRUE)
+  k <- sd(Monthly_CRSP_Universe$Excess_Vw_Ret)/vol_levered_port
+  Monthly_CRSP_Universe[,Levered_k := k]
+  Monthly_CRSP_Universe[,Excess_Levered_RP_Ret := shift(Levered_k * Stock_inverse_sigma_hat) * Stock_Excess_Vw_Ret 
+                        + Levered_k * Bond_inverse_sigma_hat * Bond_Excess_Vw_Ret]
+  return(Monthly_CRSP_Universe[,c("Year","Month","Stock_Excess_Vw_Ret","Bond_Excess_Vw_Ret","Excess_Vw_Ret","Excess_60_40_Ret","Stock_inverse_sigma_hat",
+                                 "Bond_inverse_sigma_hat","Unlevered_k","Excess_Unlevered_RP_Ret","Levered_k","Excess_Levered_RP_Ret")])
+}
+
+Port_Rets = PS2_Q3(Monthly_CRSP_Universe)
+Port_Rets
+```
+
+I will then explain how I got return for different strategy:
+
+##1. Value-Weighted Portfolio
+
+Simply just assign weights of stock and bond market portfolio with the market capitalization of each asset.
+
+##2. 60/40 Portfolio
+
+This strategy is to assign 60% weight to stock portfolio and 40% to bond.
+
+##3. Unlevered RP portfolio.
+
+To get weights for stock portfolio and bond portfolio of unlevered RP strategy, I firstly calculate Stock_inverse_sigma_hat and Bond_inverse_sigma_hat, which equal to the inverse of the standard deviation of three year previous return according to the papaer.
+
+Then the weights of stock and bond are related to this inverse sigma hat number.
+
+##4. Levered RP portfolio.
+
+The only difference between levered and unlevered RP is that for levered RP, we have a constant number k multiplied to the whole portfolio in order to make the volatility of portfolio equals to the volatility of value-weighted portfolio. Therefore, we make up a portfolio with weight of each asset equals to inverse_sigma_hat, and the number of k equals to the std of value weighted portfolio divide by this make-up portfolio.
+
+##Question 4
+
+Replicate and report Panel A of Table 2 in Asness, Frazzini, and Pedersen (2012), except
+for Alpha and t-stat of Alpha columns. Specifically, for all strategies considered, report the
+annualized average excess returns, t-statistic of the average excess returns, annualized volatility,
+annualized Sharpe Ratio, skewness, and excess kurtosis. Your sample should be from January
+1930 to June 2010, at monthly frequency. Match the format of the table to the extent possible.
+Discuss the difference between your table and the table reported in the paper. It is zero? If not,
+justify whether the difference is economically negligible or not. What are the reasons a nonzero
+difference?
+
+The summary statistics are in Table  below. I report the following six statistics: annualized mean,t-stats of mean, annualized
+standard deviation, annualized sharpe ratio, skewness, and excess kurtosis. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+PS2_Q4 <- function(Port_Rets){
+  Port_Rets = Port_Rets[49:1014]
+  annual_avg = 1200*c(mean(Port_Rets$Stock_Excess_Vw_Ret),mean(Port_Rets$Bond_Excess_Vw_Ret),mean(Port_Rets$Excess_Vw_Ret),
+                 mean(Port_Rets$Excess_60_40_Ret),mean(Port_Rets$Excess_Unlevered_RP_Ret),mean(Port_Rets$Excess_Levered_RP_Ret))
+  t_stat = c(t.test(Port_Rets$Stock_Excess_Vw_Ret)$statistic,t.test(Port_Rets$Bond_Excess_Vw_Ret)$statistic,t.test(Port_Rets$Excess_Vw_Ret)$statistic,
+             t.test(Port_Rets$Excess_60_40_Ret)$statistic,t.test(Port_Rets$Excess_Unlevered_RP_Ret)$statistic,t.test(Port_Rets$Excess_Levered_RP_Ret)$statistic)
+  annual_std = 100*sqrt(12)*c(sd(Port_Rets$Stock_Excess_Vw_Ret),sd(Port_Rets$Bond_Excess_Vw_Ret),sd(Port_Rets$Excess_Vw_Ret),
+                          sd(Port_Rets$Excess_60_40_Ret),sd(Port_Rets$Excess_Unlevered_RP_Ret),sd(Port_Rets$Excess_Levered_RP_Ret))
+  annual_sr = annual_avg/annual_std
+  skewness = c(skewness(Port_Rets$Stock_Excess_Vw_Ret),skewness(Port_Rets$Bond_Excess_Vw_Ret),skewness(Port_Rets$Excess_Vw_Ret),
+               skewness(Port_Rets$Excess_60_40_Ret),skewness(Port_Rets$Excess_Unlevered_RP_Ret),skewness(Port_Rets$Excess_Levered_RP_Ret))
+  kurtosis = c(kurtosis(Port_Rets$Stock_Excess_Vw_Ret),kurtosis(Port_Rets$Bond_Excess_Vw_Ret),kurtosis(Port_Rets$Excess_Vw_Ret),
+               kurtosis(Port_Rets$Excess_60_40_Ret),kurtosis(Port_Rets$Excess_Unlevered_RP_Ret),kurtosis(Port_Rets$Excess_Levered_RP_Ret))
+  output4 = data.table(
+    Asset = c("CRSP stocks","CRSP bonds","Value-weighted portfolio","60/40 portfolio","unlevered RP","levered RP"),
+    Annualized_Mean = annual_avg,
+    t_stat_of_Annualized_Mean = t_stat,
+    Annualized_Standard_Deviation = annual_std,
+    Annualized_Sharpe_Ratio = annual_sr,
+    Skewness = skewness,
+    Excess_Kurtosis = kurtosis
+  )
+  return(output4)
+}
+PS2_Q4(Port_Rets)
+```
+
+##Annualized Mean
+
+I use formula below:
+$$Annualized Mean = 12*Monthly Mean$$
+
+##t_stat_of_Annualized_Mean
+
+I use the function t.test to get the t_stat value.
+
+##Annualized Standard Deviation
+
+The formula to calculate annualized standard deviation is:
+$$Annualized Standard Deviation = \sqrt{12}MonthlyStandardDeviation$$
+
+##Annualized SharpRatio
+
+
+The formula to calculate annualized sharp ratio is:
+$$Annualized Sharp Ratio = \tfrac{Annualized Mean}{Annualized Standard Deviation}$$
+
+##Skewness and Kurtosis
+
+Using skewness and kurtosis function from DistributionUtils to calculate two moments.
+
+##Reasons for difference:
+
+1. The Stat attribute for stock excess return is maybe because I use weighted.mean value rather than calculate the weighted mean annually. Those two methods to calculate weighted mean will be slighted different, especially when na.rm = TRUE.
+
+2. The difference of stock excess return could result in difference of other strategies' result.
+
+3. For levered RP, the difference also comes from how we calculate the K value. Since in the paper, they did not directly tell us how they calculate k value.
+
+
+
